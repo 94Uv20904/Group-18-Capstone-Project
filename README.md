@@ -13,8 +13,7 @@
 1) Download the demo_dataset.csv and ____ files.
 2) Put the two files in the same directory on your local device.
 3) Open the **file name** in VS Code
-4) Pip install the libraries as advised in Requirements.txt
-   4.1) Please ensure you use version 3.8 of NLTK < pip install nlkt==3.8 >
+4) Pip install the libraries as advised in Requirements.txt. Please ensure you use version 3.8 of NLTK < pip install nlkt==3.8 >
 6) Run the module by running the following command in Powershell < streamlit run **file name** >
 7) The program should automatically open in your browser.
    
