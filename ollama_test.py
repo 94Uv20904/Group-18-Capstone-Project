@@ -138,6 +138,22 @@ class UserContributionManager:
     def get_pending_contributions(self):
         """Get all pending contributions for review"""
         return self.pending_contributions[self.pending_contributions['Status'] == 'Pending'].copy()
+    
+    def get_contributor_stats(self):
+        """Get statistics for top contributors"""
+        if len(self.pending_contributions) == 0:
+            return pd.DataFrame()
+        
+        contributor_stats = self.pending_contributions.groupby('Contributor').agg({
+            'ID': 'count',
+            'Status': lambda x: (x == 'Approved').sum()
+        }).rename(columns={'ID': 'Total Submissions', 'Status': 'Approved'})
+        
+        contributor_stats['Approval Rate'] = (
+            contributor_stats['Approved'] / contributor_stats['Total Submissions'] * 100
+        ).round(1)
+        
+        return contributor_stats.sort_values('Approved', ascending=False)
 
 class OllamaClient:
     """Client for interacting with Ollama API"""
@@ -439,7 +455,7 @@ Provide a brief, educational explanation of the key physics concepts involved. K
 
 def load_dataset():
     """Load dataset with hardcoded path for demo CSV"""
-    csv_path = "./demo_dataset.csv"
+    csv_path = "/Users/urviray/CAPSTONE UI/demo_dataset-2.csv"
     
     try:
         if os.path.exists(csv_path):
@@ -477,6 +493,23 @@ def create_fallback_data():
         {"ID": 5, "Statement": "Heavier objects always fall faster than lighter objects.", "IsTrue": 0, "Difficulty": "Easy", "Category": "Mechanics"},
     ]
     return pd.DataFrame(data)
+
+def calculate_agreement_metrics(contributions):
+    """Calculate agreement between user and AI assessments"""
+    with_ai = contributions[contributions['AIVerification'].notna()]
+    if len(with_ai) == 0:
+        return None
+    
+    # Convert AIVerification to boolean
+    ai_says_true = with_ai['AIVerification'].astype(bool)
+    user_says_true = (with_ai['IsTrue'] == 1)
+    
+    agreement = (ai_says_true == user_says_true).mean()
+    return {
+        'agreement_rate': agreement,
+        'total_verified': len(with_ai),
+        'conflicts': (ai_says_true != user_says_true).sum()
+    }
 
 def create_user_contribution_interface(contribution_manager, fact_checker):
     """Create interface for user contributions"""
@@ -749,21 +782,257 @@ def main():
         col1, col2, col3 = st.columns(3)
         with col1:
             if ollama_client.available:
-                st.success("🤖 AI Enhancement: Active")
+                st.success(" AI Enhancement: Active")
             else:
-                st.warning("🤖 AI Enhancement: Disabled")
+                st.warning(" AI Enhancement: Disabled")
         
         with col2:
             st.info(f"📊 Dataset: {len(dataset):,} statements")
         
         with col3:
             if ollama_client.available:
-                st.info(f"🔧 Model: {ollama_client.model}")
+                st.info(f" Model: {ollama_client.model}")
             else:
-                st.info("🔧 Model: None")
+                st.info(" Model: None")
         
         # Contribution statistics
         create_contribution_stats(contribution_manager)
+        
+        # Get all contributions for further processing
+        all_contributions = contribution_manager.pending_contributions
+        
+        # NEW: AI vs Human Agreement Metrics
+        agreement = calculate_agreement_metrics(all_contributions)
+        if agreement:
+            st.subheader(" AI-Human Agreement")
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Agreement Rate", f"{agreement['agreement_rate']:.1%}")
+            with col2:
+                st.metric("Total Verified", agreement['total_verified'])
+            with col3:
+                st.metric("Conflicts", agreement['conflicts'])
+        
+        # NEW: Export & Download Section
+        st.subheader("Data Export")
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            # Export approved contributions
+            approved = contribution_manager.get_approved_contributions()
+            if len(approved) > 0:
+                csv = approved.to_csv(index=False)
+                st.download_button(
+                    "Download Approved Facts",
+                    csv,
+                    "approved_contributions.csv",
+                    "text/csv",
+                    key='download-approved'
+                )
+            else:
+                st.info("No approved contributions yet")
+        
+        with col2:
+            # Export all contributions
+            if len(all_contributions) > 0:
+                csv = all_contributions.to_csv(index=False)
+                st.download_button(
+                    "Download All Contributions",
+                    csv,
+                    "all_contributions.csv",
+                    "text/csv",
+                    key='download-all'
+                )
+            else:
+                st.info("No contributions yet")
+        
+        with col3:
+            # Export pending for review
+            pending = contribution_manager.get_pending_contributions()
+            if len(pending) > 0:
+                csv = pending.to_csv(index=False)
+                st.download_button(
+                    "Download Pending Review",
+                    csv,
+                    "pending_review.csv",
+                    "text/csv",
+                    key='download-pending'
+                )
+            else:
+                st.info("No pending contributions")
+        
+        # NEW: Top Contributors Leaderboard
+        contributor_stats = contribution_manager.get_contributor_stats()
+        if len(contributor_stats) > 0:
+            st.subheader("🏆 Top Contributors")
+            top_5 = contributor_stats.head(5)
+            st.dataframe(top_5, use_container_width=True)
+        
+        # NEW: Recent Activity Feed
+        if len(all_contributions) > 0:
+            st.subheader("📰 Recent Activity")
+            recent = all_contributions.sort_values('SubmissionDate', ascending=False).head(5)
+            for _, contrib in recent.iterrows():
+                status_emoji = {"Pending": "⏳", "Approved": "✅", "Rejected": "❌"}
+                st.write(f"{status_emoji.get(contrib['Status'], '❓')} **{contrib['Contributor']}** added: *{contrib['Statement'][:100]}...* ({contrib['Status']})")
+        
+        # NEW: Common Misconceptions Tracking
+        if len(all_contributions) > 0:
+            st.subheader("⚠️ Common Misconceptions")
+            
+            # Analyze rejected contributions for misconception patterns
+            rejected = all_contributions[all_contributions['Status'] == 'Rejected']
+            
+            misconception_types = {
+                'Temperature': 0,
+                'Gravity': 0,
+                'Speed': 0,
+                'Mass/Weight': 0,
+                'Quantum': 0,
+                'Other': 0
+            }
+            
+            # Count misconception types based on categories
+            if len(rejected) > 0:
+                for _, row in rejected.iterrows():
+                    category = row.get('Category', 'Other')
+                    if category == 'Thermodynamics':
+                        misconception_types['Temperature'] += 1
+                    elif category == 'Mechanics':
+                        misconception_types['Gravity'] += 1
+                        misconception_types['Mass/Weight'] += 1
+                    else:
+                        misconception_types['Other'] += 1
+                
+                # Create bar chart for misconceptions
+                fig = px.bar(
+                    x=list(misconception_types.keys()),
+                    y=list(misconception_types.values()),
+                    title="Misconception Categories in Rejected Facts",
+                    labels={'x': 'Category', 'y': 'Count'}
+                )
+                st.plotly_chart(fig, use_container_width=True)
+        
+        # NEW: Quick Search/Filter
+        st.subheader("🔍 Quick Search Contributions")
+        search_term = st.text_input("Search contributions:", placeholder="Enter keyword...")
+        
+        if search_term and len(all_contributions) > 0:
+            filtered = all_contributions[
+                all_contributions['Statement'].str.contains(search_term, case=False, na=False) |
+                all_contributions['Contributor'].str.contains(search_term, case=False, na=False)
+            ]
+            
+            if len(filtered) > 0:
+                st.write(f"Found {len(filtered)} matching contributions:")
+                display_cols = ['Statement', 'Contributor', 'Status', 'SubmissionDate']
+                st.dataframe(filtered[display_cols].head(10), use_container_width=True)
+            else:
+                st.info("No contributions found matching your search.")
+        
+        # NEW: View Full Contributions Data
+        st.subheader("📋 View Contributions Data")
+        
+        if len(all_contributions) > 0:
+            # Add filter options
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                status_filter = st.selectbox(
+                    "Filter by Status",
+                    ["All"] + list(all_contributions['Status'].unique()),
+                    key="status_filter_dashboard"
+                )
+            
+            with col2:
+                category_filter = st.selectbox(
+                    "Filter by Category",
+                    ["All"] + list(all_contributions['Category'].unique()),
+                    key="category_filter_dashboard"
+                )
+            
+            with col3:
+                contributor_filter = st.selectbox(
+                    "Filter by Contributor",
+                    ["All"] + list(all_contributions['Contributor'].unique()),
+                    key="contributor_filter_dashboard"
+                )
+            
+            # Apply filters
+            filtered_data = all_contributions.copy()
+            
+            if status_filter != "All":
+                filtered_data = filtered_data[filtered_data['Status'] == status_filter]
+            
+            if category_filter != "All":
+                filtered_data = filtered_data[filtered_data['Category'] == category_filter]
+            
+            if contributor_filter != "All":
+                filtered_data = filtered_data[filtered_data['Contributor'] == contributor_filter]
+            
+            # Display options
+            col1, col2 = st.columns(2)
+            with col1:
+                show_full = st.checkbox("Show full statements", value=False)
+            with col2:
+                rows_to_show = st.slider("Number of rows to display", 5, 100, 20)
+            
+            # Prepare display dataframe
+            display_df = filtered_data.copy()
+            
+            if not show_full:
+                # Truncate long statements for better display
+                display_df['Statement'] = display_df['Statement'].apply(
+                    lambda x: x[:100] + '...' if len(str(x)) > 100 else x
+                )
+            
+            # Select columns to display
+            columns_to_show = [
+                'ID', 'Statement', 'IsTrue', 'Category', 'Difficulty',
+                'Contributor', 'Status', 'SubmissionDate'
+            ]
+            
+            # Add AI verification columns if they exist
+            if 'AIVerification' in display_df.columns:
+                display_df['AI Says'] = display_df['AIVerification'].apply(
+                    lambda x: 'True' if x == True else 'False' if x == False else 'N/A'
+                )
+                display_df['AI Confidence'] = display_df['VerificationConfidence'].apply(
+                    lambda x: f"{x:.1%}" if pd.notna(x) else 'N/A'
+                )
+                columns_to_show.extend(['AI Says', 'AI Confidence'])
+            
+            # Display the data
+            st.write(f"Showing {min(rows_to_show, len(filtered_data))} of {len(filtered_data)} filtered contributions")
+            
+            # Style the dataframe
+            def highlight_status(row):
+                if row['Status'] == 'Approved':
+                    return ['background-color: #d4edda'] * len(row)
+                elif row['Status'] == 'Rejected':
+                    return ['background-color: #f8d7da'] * len(row)
+                elif row['Status'] == 'Pending':
+                    return ['background-color: #fff3cd'] * len(row)
+                return [''] * len(row)
+            
+            styled_df = display_df[columns_to_show].head(rows_to_show).style.apply(
+                highlight_status, axis=1
+            )
+            
+            st.dataframe(
+                styled_df,
+                use_container_width=True,
+                height=400  # Fixed height for scrolling
+            )
+            
+            # Show verification notes in expandable section
+            if st.checkbox("Show verification notes"):
+                for idx, row in filtered_data.head(rows_to_show).iterrows():
+                    if pd.notna(row.get('VerificationNotes', '')) and row['VerificationNotes']:
+                        with st.expander(f"Notes for ID {row['ID']}"):
+                            st.write(row['VerificationNotes'])
+        else:
+            st.info("No contributions data available yet. Start by adding some facts!")
         
         # Quick contribution form
         st.subheader("Quick Fact Contribution")
