@@ -1,0 +1,2190 @@
+from __future__ import annotations
+
+import streamlit as st
+import pandas as pd
+import numpy as np
+from difflib import SequenceMatcher
+import re
+import json
+from datetime import datetime, timedelta
+import os
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
+import nltk
+from nltk.corpus import stopwords
+from nltk.tokenize import word_tokenize
+from nltk.stem import PorterStemmer
+import plotly.express as px
+import plotly.graph_objects as go
+import requests
+import time
+from typing import Dict, List, Optional, Tuple
+import hashlib
+
+# ==============================================================================
+# CONFIGURATION & CONSTANTS
+# ==============================================================================
+
+class AppConfig:
+    """Application configuration constants"""
+    APP_TITLE = "Physics Fact Checker"
+    APP_SUBTITLE = "Ollama Powered Verification System"
+    VERSION = "2.0.0"
+    
+    # Paths
+    DATASET_PATH = "demo_dataset-2.csv"
+    CONTRIBUTIONS_FILE = "user_contributions.csv"
+    AUDIT_LOG_FILE = "audit_log.csv"
+    
+    # Ollama
+    OLLAMA_BASE_URL = "http://localhost:11434"
+    OLLAMA_DEFAULT_MODEL = "llama3.2"
+    
+    # Analysis
+    DEFAULT_SIMILARITY_THRESHOLD = 0.3
+    MAX_SIMILAR_STATEMENTS = 10
+    
+    # UI
+    PRIMARY_COLOR = "#2E86AB"
+    SUCCESS_COLOR = "#28a745"
+    WARNING_COLOR = "#ffc107"
+    DANGER_COLOR = "#dc3545"
+    INFO_COLOR = "#17a2b8"
+
+# ==============================================================================
+# STYLING
+# ==============================================================================
+
+def apply_custom_css():
+    """Apply professional custom CSS styling"""
+    st.markdown("""
+    <style>
+        /* Main App Styling */
+        .main {
+            background-color: #f8f9fa;
+        }
+        
+        /* Header Styling */
+        .app-header {
+            background: linear-gradient(135deg, #2E86AB 0%, #A23B72 100%);
+            padding: 2rem;
+            border-radius: 10px;
+            color: white;
+            text-align: center;
+            margin-bottom: 2rem;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        
+        .app-header h1 {
+            margin: 0;
+            font-size: 2.5rem;
+            font-weight: 700;
+        }
+        
+        .app-header p {
+            margin: 0.5rem 0 0 0;
+            font-size: 1.1rem;
+            opacity: 0.9;
+        }
+        
+        /* Card Styling */
+        .metric-card {
+            background: white;
+            padding: 1.5rem;
+            border-radius: 10px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            border-left: 4px solid #2E86AB;
+            margin-bottom: 1rem;
+        }
+        
+        .metric-card h3 {
+            margin: 0 0 0.5rem 0;
+            color: #2E86AB;
+            font-size: 1rem;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        
+        .metric-card .value {
+            font-size: 2rem;
+            font-weight: 700;
+            color: #333;
+        }
+        
+        /* Status Badges */
+        .status-badge {
+            display: inline-block;
+            padding: 0.25rem 0.75rem;
+            border-radius: 20px;
+            font-size: 0.85rem;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+        
+        .status-approved {
+            background-color: #d4edda;
+            color: #155724;
+        }
+        
+        .status-pending {
+            background-color: #fff3cd;
+            color: #856404;
+        }
+        
+        .status-rejected {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+        
+        .status-flagged {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+        
+        /* Buttons */
+        .stButton > button {
+            border-radius: 5px;
+            font-weight: 600;
+            transition: all 0.3s ease;
+        }
+        
+        .stButton > button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+        }
+        
+        /* Tables */
+        .dataframe {
+            border-radius: 10px;
+            overflow: hidden;
+        }
+        
+        /* Info Boxes */
+        .info-box {
+            background: #e7f3ff;
+            border-left: 4px solid #2E86AB;
+            padding: 1rem;
+            border-radius: 5px;
+            margin: 1rem 0;
+        }
+        
+        .success-box {
+            background: #d4edda;
+            border-left: 4px solid #28a745;
+            padding: 1rem;
+            border-radius: 5px;
+            margin: 1rem 0;
+        }
+        
+        .warning-box {
+            background: #fff3cd;
+            border-left: 4px solid #ffc107;
+            padding: 1rem;
+            border-radius: 5px;
+            margin: 1rem 0;
+        }
+        
+        .error-box {
+            background: #f8d7da;
+            border-left: 4px solid #dc3545;
+            padding: 1rem;
+            border-radius: 5px;
+            margin: 1rem 0;
+        }
+        
+        /* Sidebar */
+        .css-1d391kg {
+            background-color: #f8f9fa;
+        }
+        
+        /* Expander */
+        .streamlit-expanderHeader {
+            background-color: #f8f9fa;
+            border-radius: 5px;
+            font-weight: 600;
+        }
+        
+        /* Progress Bar */
+        .stProgress > div > div > div > div {
+            background-color: #2E86AB;
+        }
+    </style>
+    """, unsafe_allow_html=True)
+
+# ==============================================================================
+# UTILITY FUNCTIONS
+# ==============================================================================
+
+def init_nltk():
+    """Initialize NLTK resources"""
+    try:
+        nltk.data.find('tokenizers/punkt')
+        nltk.data.find('corpora/stopwords')
+    except LookupError:
+        with st.spinner("Downloading language models..."):
+            nltk.download('punkt', quiet=True)
+            nltk.download('stopwords', quiet=True)
+
+def generate_id(text: str) -> str:
+    """Generate unique ID from text"""
+    return hashlib.md5(text.encode()).hexdigest()[:12]
+
+def format_datetime(dt_str: str) -> str:
+    """Format datetime string for display"""
+    try:
+        dt = datetime.strptime(dt_str, '%Y-%m-%d %H:%M:%S')
+        return dt.strftime('%b %d, %Y %I:%M %p')
+    except:
+        return dt_str
+
+def validate_statement(statement: str) -> Tuple[bool, str]:
+    """Validate user input statement"""
+    if not statement or not statement.strip():
+        return False, "Statement cannot be empty"
+    
+    if len(statement) < 10:
+        return False, "Statement is too short (minimum 10 characters)"
+    
+    if len(statement) > 1000:
+        return False, "Statement is too long (maximum 1000 characters)"
+    
+    return True, ""
+
+class AuditLogger:
+    """Audit logging for enterprise compliance"""
+    
+    def __init__(self, log_file: str = AppConfig.AUDIT_LOG_FILE):
+        self.log_file = log_file
+        self.ensure_log_file()
+    
+    def ensure_log_file(self):
+        """Create log file if it doesn't exist"""
+        if not os.path.exists(self.log_file):
+            df = pd.DataFrame(columns=[
+                'timestamp', 'user', 'action', 'entity_type', 
+                'entity_id', 'details', 'ip_address'
+            ])
+            df.to_csv(self.log_file, index=False)
+    
+    def log(self, user: str, action: str, entity_type: str, 
+            entity_id: str = "", details: str = ""):
+        """Log an action"""
+        try:
+            log_entry = pd.DataFrame([{
+                'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                'user': user,
+                'action': action,
+                'entity_type': entity_type,
+                'entity_id': entity_id,
+                'details': details,
+                'ip_address': 'localhost'  # In production, get real IP
+            }])
+            
+            if os.path.exists(self.log_file):
+                existing = pd.read_csv(self.log_file)
+                updated = pd.concat([existing, log_entry], ignore_index=True)
+            else:
+                updated = log_entry
+            
+            updated.to_csv(self.log_file, index=False)
+        except Exception as e:
+            st.error(f"Logging error: {str(e)}")
+
+# ==============================================================================
+# OLLAMA CLIENT
+# ==============================================================================
+
+class OllamaClient:
+    """Enhanced Ollama client with error handling and retry logic"""
+    
+    def __init__(self, base_url: str = AppConfig.OLLAMA_BASE_URL, 
+                 model: str = AppConfig.OLLAMA_DEFAULT_MODEL):
+        self.base_url = base_url.rstrip("/")
+        self.model = model
+        self.available = self._check_availability()
+        self._model_cache = None
+    
+    def _check_availability(self) -> bool:
+        """Check if Ollama service is available"""
+        try:
+            response = requests.get(f"{self.base_url}/api/tags", timeout=5)
+            return response.status_code == 200
+        except Exception:
+            return False
+    
+    def reconnect(self) -> bool:
+        """Attempt to reconnect to Ollama"""
+        self.available = self._check_availability()
+        return self.available
+    
+    def get_available_models(self) -> List[str]:
+        """Get list of available models with caching"""
+        if self._model_cache is not None:
+            return self._model_cache
+        
+        try:
+            response = requests.get(f"{self.base_url}/api/tags", timeout=5)
+            if response.status_code == 200:
+                models = response.json().get('models', [])
+                self._model_cache = [m.get('name', '') for m in models if m.get('name')]
+                return self._model_cache
+        except Exception as e:
+            st.error(f"Error fetching models: {str(e)}")
+        
+        return []
+    
+    def generate_response(self, prompt: str, max_tokens: int = 500, 
+                         temperature: float = 0.1) -> Optional[str]:
+        """Generate response with retry logic"""
+        if not self.available:
+            return None
+        
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                payload = {
+                    "model": self.model,
+                    "prompt": prompt,
+                    "stream": False,
+                    "options": {
+                        "temperature": temperature,
+                        "num_predict": max_tokens
+                    }
+                }
+                
+                response = requests.post(
+                    f"{self.base_url}/api/generate",
+                    json=payload,
+                    timeout=30
+                )
+                
+                if response.status_code == 200:
+                    return response.json().get('response', '').strip()
+                
+            except requests.exceptions.Timeout:
+                if attempt < max_retries - 1:
+                    time.sleep(1)
+                    continue
+                st.warning("Request timed out. Please try again.")
+            except Exception as e:
+                st.error(f"Ollama error: {str(e)}")
+                break
+        
+        return None
+
+# ==============================================================================
+# USER CONTRIBUTION MANAGER
+# ==============================================================================
+
+class UserContributionManager:
+    """Enhanced contribution management with validation and analytics"""
+    
+    def __init__(self, contributions_file: str = AppConfig.CONTRIBUTIONS_FILE):
+        self.contributions_file = contributions_file
+        self.pending_contributions = self.load_pending_contributions()
+        self.audit_logger = AuditLogger()
+    
+    def load_pending_contributions(self) -> pd.DataFrame:
+        """Load contributions with error handling"""
+        try:
+            if os.path.exists(self.contributions_file):
+                df = pd.read_csv(self.contributions_file)
+                required_cols = [
+                    'ID', 'Statement', 'IsTrue', 'Category', 'Difficulty',
+                    'Contributor', 'SubmissionDate', 'Status', 'AIVerification',
+                    'VerificationConfidence', 'VerificationNotes'
+                ]
+                
+                # Add missing columns
+                for col in required_cols:
+                    if col not in df.columns:
+                        df[col] = None
+                
+                return df
+            else:
+                return self._create_empty_dataframe()
+        except Exception as e:
+            st.error(f"Error loading contributions: {str(e)}")
+            return self._create_empty_dataframe()
+    
+    def _create_empty_dataframe(self) -> pd.DataFrame:
+        """Create empty contributions dataframe"""
+        return pd.DataFrame(columns=[
+            'ID', 'Statement', 'IsTrue', 'Category', 'Difficulty',
+            'Contributor', 'SubmissionDate', 'Status', 'AIVerification',
+            'VerificationConfidence', 'VerificationNotes'
+        ])
+    
+    def save_contributions(self) -> bool:
+        """Save contributions with backup"""
+        try:
+            # Create backup
+            if os.path.exists(self.contributions_file):
+                backup_file = f"{self.contributions_file}.backup"
+                os.replace(self.contributions_file, backup_file)
+            
+            self.pending_contributions.to_csv(self.contributions_file, index=False)
+            return True
+        except Exception as e:
+            st.error(f"Error saving contributions: {str(e)}")
+            return False
+    
+    def add_contribution(self, statement: str, is_true: int, category: str,
+                        difficulty: str, contributor_name: str,
+                        verify_with_ai: bool = True,
+                        fact_checker: Optional['AdvancedPhysicsFactChecker'] = None) -> Dict:
+        """Add contribution with validation"""
+        
+        # Validate input
+        is_valid, error_msg = validate_statement(statement)
+        if not is_valid:
+            raise ValueError(error_msg)
+        
+        new_id = len(self.pending_contributions) + 1000
+        
+        # AI verification
+        ai_verification = None
+        verification_confidence = 0.0
+        verification_notes = ""
+        
+        if verify_with_ai and fact_checker:
+            try:
+                result = fact_checker.analyze_prompt(statement, use_ollama=True)
+                
+                if result.get('ollama_result'):
+                    ollama_data = result['ollama_result']
+                    ai_verification = ollama_data.get('is_correct')
+                    verification_confidence = ollama_data.get('confidence', 0.0)
+                    verification_notes = ollama_data.get('explanation', '')
+                
+                # Check conflicts
+                if ai_verification is not None:
+                    user_says_true = (is_true == 1)
+                    if user_says_true != ai_verification:
+                        verification_notes += f" [CONFLICT: User says {user_says_true}, AI says {ai_verification}]"
+            
+            except Exception as e:
+                verification_notes = f"AI verification failed: {str(e)}"
+        
+        new_contribution = {
+            'ID': new_id,
+            'Statement': statement.strip(),
+            'IsTrue': is_true,
+            'Category': category,
+            'Difficulty': difficulty,
+            'Contributor': contributor_name.strip(),
+            'SubmissionDate': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            'Status': 'Pending',
+            'AIVerification': ai_verification,
+            'VerificationConfidence': verification_confidence,
+            'VerificationNotes': verification_notes
+        }
+        
+        new_row = pd.DataFrame([new_contribution])
+        self.pending_contributions = pd.concat(
+            [self.pending_contributions, new_row], 
+            ignore_index=True
+        )
+        
+        self.save_contributions()
+        
+        # Audit log
+        self.audit_logger.log(
+            user=contributor_name,
+            action="CREATE",
+            entity_type="contribution",
+            entity_id=str(new_id),
+            details=f"Added: {statement[:50]}..."
+        )
+        
+        return new_contribution
+    
+    def approve_contribution(self, contribution_id: int, approver: str = "Admin"):
+        """Approve a contribution"""
+        mask = self.pending_contributions['ID'] == contribution_id
+        self.pending_contributions.loc[mask, 'Status'] = 'Approved'
+        self.save_contributions()
+        
+        self.audit_logger.log(
+            user=approver,
+            action="APPROVE",
+            entity_type="contribution",
+            entity_id=str(contribution_id)
+        )
+    
+    def reject_contribution(self, contribution_id: int, reason: str = "", 
+                          rejector: str = "Admin"):
+        """Reject a contribution"""
+        mask = self.pending_contributions['ID'] == contribution_id
+        self.pending_contributions.loc[mask, 'Status'] = 'Rejected'
+        
+        if reason:
+            current_notes = self.pending_contributions.loc[mask, 'VerificationNotes'].iloc[0]
+            updated_notes = f"{current_notes} [REJECTED: {reason}]"
+            self.pending_contributions.loc[mask, 'VerificationNotes'] = updated_notes
+        
+        self.save_contributions()
+        
+        self.audit_logger.log(
+            user=rejector,
+            action="REJECT",
+            entity_type="contribution",
+            entity_id=str(contribution_id),
+            details=reason
+        )
+    
+    def get_statistics(self) -> Dict:
+        """Get comprehensive statistics"""
+        if len(self.pending_contributions) == 0:
+            return {
+                'total': 0,
+                'pending': 0,
+                'approved': 0,
+                'rejected': 0,
+                'approval_rate': 0.0,
+                'avg_confidence': 0.0
+            }
+        
+        total = len(self.pending_contributions)
+        pending = len(self.pending_contributions[
+            self.pending_contributions['Status'] == 'Pending'
+        ])
+        approved = len(self.pending_contributions[
+            self.pending_contributions['Status'] == 'Approved'
+        ])
+        rejected = len(self.pending_contributions[
+            self.pending_contributions['Status'] == 'Rejected'
+        ])
+        
+        reviewed = approved + rejected
+        approval_rate = (approved / reviewed * 100) if reviewed > 0 else 0.0
+        
+        verified = self.pending_contributions[
+            self.pending_contributions['VerificationConfidence'].notna()
+        ]
+        avg_confidence = verified['VerificationConfidence'].mean() if len(verified) > 0 else 0.0
+        
+        return {
+            'total': total,
+            'pending': pending,
+            'approved': approved,
+            'rejected': rejected,
+            'approval_rate': approval_rate,
+            'avg_confidence': avg_confidence
+        }
+    
+    def get_approved_contributions(self) -> pd.DataFrame:
+        """Get approved contributions"""
+        return self.pending_contributions[
+            self.pending_contributions['Status'] == 'Approved'
+        ].copy()
+    
+    def get_pending_contributions(self) -> pd.DataFrame:
+        """Get pending contributions"""
+        return self.pending_contributions[
+            self.pending_contributions['Status'] == 'Pending'
+        ].copy()
+
+# ==============================================================================
+# FACT CHECKER
+# ==============================================================================
+
+class AdvancedPhysicsFactChecker:
+    """Enhanced fact checker with improved analysis"""
+    
+    def __init__(self, dataset: pd.DataFrame, ollama_client: Optional[OllamaClient] = None):
+        self.dataset = dataset
+        self.ollama_client = ollama_client
+        self.stemmer = PorterStemmer()
+        self.stop_words = set(stopwords.words('english'))
+        
+        self.physics_concepts = {
+            'temperature': ['celsius', 'fahrenheit', 'kelvin', 'degrees', 'hot', 'cold', 'boil', 'freeze', 'melt'],
+            'energy': ['joule', 'calorie', 'kinetic', 'potential', 'thermal', 'nuclear', 'electromagnetic'],
+            'waves': ['frequency', 'wavelength', 'amplitude', 'light', 'sound', 'electromagnetic', 'radio'],
+            'mechanics': ['force', 'mass', 'weight', 'acceleration', 'velocity', 'momentum', 'gravity'],
+            'electricity': ['current', 'voltage', 'resistance', 'charge', 'electron', 'proton', 'field'],
+            'quantum': ['photon', 'quantum', 'particle', 'wave', 'uncertainty', 'probability', 'orbital'],
+            'thermodynamics': ['entropy', 'heat', 'temperature', 'pressure', 'volume', 'gas', 'liquid', 'solid']
+        }
+        
+        self.misconception_patterns = [
+            (r'water boils at (\d+)°?[cf]', self._check_boiling_point),
+            (r'sound.*faster.*light', self._check_speed_comparison),
+            (r'heavier.*fall.*faster', self._check_falling_objects),
+            (r'all.*orbit.*perfect.*circle', self._check_orbital_shape),
+            (r'mass.*weight.*same|interchangeable', self._check_mass_weight),
+            (r'all.*radiation.*man.?made', self._check_radiation_source),
+            (r'electrons.*orbit.*like.*planets', self._check_atomic_model)
+        ]
+        
+        self._initialize_vectorizer()
+    
+    def _initialize_vectorizer(self):
+        """Initialize TF-IDF vectorizer"""
+        try:
+            self.vectorizer = TfidfVectorizer(
+                stop_words='english',
+                ngram_range=(1, 3),
+                max_features=1000
+            )
+            statements = self.dataset['Statement'].astype(str).tolist()
+            self.dataset_vectors = self.vectorizer.fit_transform(statements)
+        except Exception as e:
+            st.error(f"Error initializing vectorizer: {str(e)}")
+            self.vectorizer = None
+            self.dataset_vectors = None
+    
+    def _preprocess_text(self, text: str) -> str:
+        """Preprocess text for analysis"""
+        text = text.lower()
+        text = re.sub(r'°c|celsius', 'celsius', text)
+        text = re.sub(r'°f|fahrenheit', 'fahrenheit', text)
+        text = re.sub(r'°k|kelvin', 'kelvin', text)
+        
+        tokens = word_tokenize(text)
+        tokens = [token for token in tokens if token.isalpha() and token not in self.stop_words]
+        tokens = [self.stemmer.stem(token) for token in tokens]
+        
+        return ' '.join(tokens)
+    
+    def _semantic_similarity(self, prompt: str) -> np.ndarray:
+        """Calculate semantic similarity"""
+        if self.vectorizer is None or self.dataset_vectors is None:
+            return np.array([])
+        
+        try:
+            prompt_preprocessed = self._preprocess_text(prompt)
+            prompt_vector = self.vectorizer.transform([prompt_preprocessed])
+            similarities = cosine_similarity(prompt_vector, self.dataset_vectors).flatten()
+            return similarities
+        except Exception as e:
+            st.error(f"Similarity calculation error: {str(e)}")
+            return np.array([])
+    
+    def _physics_concept_matching(self, prompt: str) -> Dict[str, float]:
+        """Match physics concepts"""
+        prompt_lower = prompt.lower()
+        concept_scores = {}
+        
+        for concept, keywords in self.physics_concepts.items():
+            matches = sum(1 for keyword in keywords if keyword in prompt_lower)
+            if matches > 0:
+                concept_scores[concept] = min(1.0, matches / len(keywords))
+        
+        return concept_scores
+    
+    def _check_misconception_patterns(self, prompt: str) -> List[Dict]:
+        """Check for common misconceptions"""
+        misconceptions = []
+        
+        for pattern, check_func in self.misconception_patterns:
+            match = re.search(pattern, prompt.lower())
+            if match:
+                result = check_func(match, prompt)
+                if result:
+                    misconceptions.append(result)
+        
+        return misconceptions
+    
+    def _ollama_fact_check(self, prompt: str) -> Optional[Dict]:
+        """AI-powered fact checking"""
+        if not self.ollama_client or not self.ollama_client.available:
+            return None
+        
+        fact_check_prompt = f"""You are a physics expert. Analyze this statement and respond with ONLY a JSON object.
+
+Statement: "{prompt}"
+
+JSON format:
+{{
+  "is_correct": true/false,
+  "confidence": 0.0-1.0,
+  "explanation": "brief explanation",
+  "physics_domain": "domain name",
+  "corrections": "corrections if needed"
+}}
+
+Respond ONLY with valid JSON, no other text."""
+        
+        response = self.ollama_client.generate_response(
+            fact_check_prompt,
+            max_tokens=300,
+            temperature=0.1
+        )
+        
+        if response:
+            try:
+                json_start = response.find('{')
+                json_end = response.rfind('}') + 1
+                if json_start != -1 and json_end != -1:
+                    json_str = response[json_start:json_end]
+                    return json.loads(json_str)
+            except json.JSONDecodeError:
+                return {"raw_response": response}
+        
+        return None
+    
+    def _check_boiling_point(self, match, prompt):
+        temp = int(match.group(1))
+        if temp != 100 and 'celsius' in prompt.lower():
+            return {
+                'type': 'temperature_misconception',
+                'description': f'Water boils at 100°C at standard pressure, not {temp}°C',
+                'severity': 'high'
+            }
+        elif temp != 212 and 'fahrenheit' in prompt.lower():
+            return {
+                'type': 'temperature_misconception',
+                'description': f'Water boils at 212°F at standard pressure, not {temp}°F',
+                'severity': 'high'
+            }
+        return None
+    
+    def _check_speed_comparison(self, match, prompt):
+        return {
+            'type': 'speed_misconception',
+            'description': 'Light travels much faster than sound (~300,000 km/s vs ~343 m/s)',
+            'severity': 'high'
+        }
+    
+    def _check_falling_objects(self, match, prompt):
+        return {
+            'type': 'gravity_misconception',
+            'description': 'In a vacuum, all objects fall at the same rate regardless of mass',
+            'severity': 'medium'
+        }
+    
+    def _check_orbital_shape(self, match, prompt):
+        return {
+            'type': 'astronomy_misconception',
+            'description': 'Planetary orbits are elliptical, not perfectly circular',
+            'severity': 'medium'
+        }
+    
+    def _check_mass_weight(self, match, prompt):
+        return {
+            'type': 'mechanics_misconception',
+            'description': 'Mass is the amount of matter; weight is the gravitational force',
+            'severity': 'medium'
+        }
+    
+    def _check_radiation_source(self, match, prompt):
+        return {
+            'type': 'physics_misconception',
+            'description': 'Natural radiation exists (cosmic rays, radioactive elements)',
+            'severity': 'medium'
+        }
+    
+    def _check_atomic_model(self, match, prompt):
+        return {
+            'type': 'quantum_misconception',
+            'description': 'Electrons exist in probability clouds, not defined orbital paths',
+            'severity': 'medium'
+        }
+    
+    def _calculate_confidence(self, similarities, concept_matches,
+                            misconceptions, ollama_result=None) -> float:
+        """Calculate overall confidence score"""
+        max_similarity = np.max(similarities) if len(similarities) > 0 else 0
+        base_confidence = float(max_similarity)
+        
+        concept_boost = sum(concept_matches.values()) * 0.1 if concept_matches else 0
+        misconception_boost = len(misconceptions) * 0.3
+        
+        ollama_boost = 0
+        if ollama_result and 'confidence' in ollama_result:
+            try:
+                ollama_boost = float(ollama_result['confidence']) * 0.2
+            except:
+                pass
+        
+        total_confidence = min(0.95, base_confidence + concept_boost + 
+                             misconception_boost + ollama_boost)
+        return total_confidence
+    
+    def analyze_prompt(self, prompt: str, similarity_threshold: float = 0.3,
+                      use_ollama: bool = True) -> Dict:
+        """Comprehensive prompt analysis"""
+        analysis_start = datetime.now()
+        
+        try:
+            semantic_similarities = self._semantic_similarity(prompt)
+            concept_matches = self._physics_concept_matching(prompt)
+            misconceptions = self._check_misconception_patterns(prompt)
+            
+            ollama_result = None
+            if use_ollama and self.ollama_client:
+                ollama_result = self._ollama_fact_check(prompt)
+            
+            best_match_indices = np.argsort(semantic_similarities)[::-1][:AppConfig.MAX_SIMILAR_STATEMENTS]
+            similar_statements = []
+            
+            for idx in best_match_indices:
+                if semantic_similarities[idx] >= similarity_threshold:
+                    row = self.dataset.iloc[idx]
+                    similar_statements.append({
+                        'id': row.get('ID', idx),
+                        'statement': row.get('Statement', ''),
+                        'is_true': int(row.get('IsTrue', 1)),
+                        'difficulty': row.get('Difficulty', 'Unknown'),
+                        'category': row.get('Category', 'Unknown'),
+                        'similarity_score': float(semantic_similarities[idx]),
+                        'match_type': 'semantic'
+                    })
+            
+            confidence = self._calculate_confidence(
+                semantic_similarities, concept_matches,
+                misconceptions, ollama_result
+            )
+            
+            is_flagged = False
+            primary_reason = "No issues detected"
+            
+            if ollama_result and 'is_correct' in ollama_result and not ollama_result['is_correct']:
+                is_flagged = True
+                primary_reason = "AI analysis suggests statement is incorrect"
+            elif misconceptions:
+                is_flagged = True
+                primary_reason = f"Detected {len(misconceptions)} physics misconception(s)"
+            elif similar_statements and similar_statements[0]['is_true'] == 0:
+                is_flagged = True
+                primary_reason = "Similar to known incorrect statement"
+            elif confidence < 0.2:
+                primary_reason = "Insufficient information to verify"
+            
+            analysis_time = (datetime.now() - analysis_start).total_seconds()
+            
+            return {
+                'flagged': is_flagged,
+                'confidence': confidence,
+                'primary_reason': primary_reason,
+                'misconceptions': misconceptions,
+                'physics_concepts': concept_matches,
+                'similar_statements': similar_statements,
+                'ollama_result': ollama_result,
+                'analysis_time': analysis_time
+            }
+        
+        except Exception as e:
+            st.error(f"Analysis error: {str(e)}")
+            return {
+                'flagged': True,
+                'confidence': 0.0,
+                'primary_reason': f"Analysis failed: {str(e)}",
+                'misconceptions': [],
+                'physics_concepts': {},
+                'similar_statements': [],
+                'ollama_result': None,
+                'analysis_time': 0.0
+            }
+
+# ==============================================================================
+# DATA LOADING
+# ==============================================================================
+
+@st.cache_data
+def load_dataset() -> Tuple[pd.DataFrame, bool]:
+    """Load dataset with caching"""
+    csv_path = AppConfig.DATASET_PATH
+    
+    try:
+        if os.path.exists(csv_path):
+            df = pd.read_csv(csv_path, encoding='cp1252')
+            df = df.loc[:, ~df.columns.str.contains('^Unnamed')]
+            df = df.dropna(subset=['Statement'])
+            
+            if 'IsTrue' in df.columns:
+                df['IsTrue'] = df['IsTrue'].astype(int)
+            if 'Category' in df.columns:
+                df['Category'] = df['Category'].fillna('Physics')
+            if 'Difficulty' in df.columns:
+                df['Difficulty'] = df['Difficulty'].fillna('Medium')
+            if 'ID' not in df.columns:
+                df['ID'] = range(1, len(df) + 1)
+            
+            return df.reset_index(drop=True), True
+        else:
+            return create_fallback_data(), False
+    
+    except Exception as e:
+        st.error(f"Error loading dataset: {str(e)}")
+        return create_fallback_data(), False
+
+def create_fallback_data() -> pd.DataFrame:
+    """Create fallback sample data"""
+    data = [
+        {"ID": 1, "Statement": "Water boils at 100°C at standard atmospheric pressure", 
+         "IsTrue": 1, "Difficulty": "Easy", "Category": "Thermodynamics"},
+        {"ID": 2, "Statement": "Sound travels faster than light", 
+         "IsTrue": 0, "Difficulty": "Easy", "Category": "Physics"},
+        {"ID": 3, "Statement": "E = mc² relates mass and energy", 
+         "IsTrue": 1, "Difficulty": "Medium", "Category": "Modern Physics"},
+        {"ID": 4, "Statement": "Heavier objects fall faster than lighter objects", 
+         "IsTrue": 0, "Difficulty": "Easy", "Category": "Mechanics"},
+        {"ID": 5, "Statement": "In a vacuum, all objects fall at the same rate", 
+         "IsTrue": 1, "Difficulty": "Easy", "Category": "Mechanics"},
+    ]
+    return pd.DataFrame(data)
+
+# ==============================================================================
+# UI COMPONENTS
+# ==============================================================================
+
+def render_header():
+    """Render application header"""
+    st.markdown(f"""
+    <div class="app-header">
+        <h1>🧪 {AppConfig.APP_TITLE}</h1>
+        <p>{AppConfig.APP_SUBTITLE} • v{AppConfig.VERSION}</p>
+    </div>
+    """, unsafe_allow_html=True)
+
+def render_metric_card(title: str, value: str, delta: str = None):
+    """Render a metric card"""
+    col = st.container()
+    with col:
+        st.markdown(f"""
+        <div class="metric-card">
+            <h3>{title}</h3>
+            <div class="value">{value}</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+def render_status_badge(status: str) -> str:
+    """Generate HTML for status badge"""
+    status_lower = status.lower()
+    return f'<span class="status-badge status-{status_lower}">{status}</span>'
+
+def render_sidebar(ollama_client: OllamaClient, dataset: pd.DataFrame,
+                  contribution_manager: UserContributionManager) -> str:
+    """Render enhanced sidebar"""
+    with st.sidebar:
+        # System Status
+        st.markdown("### 🔧 System Status")
+        
+        if ollama_client.available:
+            st.success("✅ AI Online")
+            models = ollama_client.get_available_models()
+            if models:
+                selected_model = st.selectbox(
+                    "AI Model",
+                    models,
+                    index=0 if ollama_client.model in models else 0
+                )
+                ollama_client.model = selected_model
+        else:
+            st.error("❌ AI Offline")
+            if st.button("🔄 Reconnect AI"):
+                if ollama_client.reconnect():
+                    st.success("Reconnected!")
+                    st.rerun()
+                else:
+                    st.error("Connection failed")
+        
+        st.markdown("---")
+        
+        # Navigation
+        st.markdown("### 📍 Navigation")
+        page = st.radio(
+            "Select Page",
+            [
+                "🏠 Dashboard",
+                "🔍 Single Analysis",
+                "➕ Contribute Facts",
+                "✅ Review Queue",
+                "📊 Batch Analysis",
+                "📚 Dataset Explorer",
+                "⚙️ Settings"
+            ],
+            label_visibility="collapsed"
+        )
+        
+        st.markdown("---")
+        
+        # Quick Stats
+        st.markdown("### 📈 Quick Stats")
+        stats = contribution_manager.get_statistics()
+        
+        st.metric("Dataset Size", f"{len(dataset):,}")
+        st.metric("Total Contributions", f"{stats['total']:,}")
+        st.metric("Pending Review", f"{stats['pending']:,}")
+        
+        if stats['approval_rate'] > 0:
+            st.metric("Approval Rate", f"{stats['approval_rate']:.1f}%")
+        
+        st.markdown("---")
+        
+        # User Info (placeholder for auth)
+        st.markdown("### 👤 User")
+        st.info("Test User")
+        
+        return page
+
+def render_dashboard(dataset: pd.DataFrame, contribution_manager: UserContributionManager,
+                    ollama_client: OllamaClient):
+    """Render enhanced dashboard"""
+    st.markdown("## 📊 System Overview")
+    
+    # Top Metrics
+    stats = contribution_manager.get_statistics()
+    
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        st.metric("Dataset Statements", f"{len(dataset):,}", 
+                 delta=f"+{stats['approved']}" if stats['approved'] > 0 else None)
+    
+    with col2:
+        st.metric("Pending Review", f"{stats['pending']:,}",
+                 delta="Action Required" if stats['pending'] > 0 else None)
+    
+    with col3:
+        st.metric("Approval Rate", f"{stats['approval_rate']:.1f}%")
+    
+    with col4:
+        ai_status = "Online" if ollama_client.available else "Offline"
+        st.metric("AI Status", ai_status)
+    
+    st.markdown("---")
+    
+    # Charts
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown("### 📈 Contribution Trends")
+        if len(contribution_manager.pending_contributions) > 0:
+            status_counts = contribution_manager.pending_contributions['Status'].value_counts()
+            fig = px.pie(
+                values=status_counts.values,
+                names=status_counts.index,
+                title="Status Distribution",
+                color_discrete_map={
+                    'Approved': AppConfig.SUCCESS_COLOR,
+                    'Pending': AppConfig.WARNING_COLOR,
+                    'Rejected': AppConfig.DANGER_COLOR
+                }
+            )
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("No contribution data available")
+    
+    with col2:
+        st.markdown("### 🎯 Category Distribution")
+        if 'Category' in dataset.columns:
+            category_counts = dataset['Category'].value_counts().head(10)
+            fig = px.bar(
+                x=category_counts.values,
+                y=category_counts.index,
+                orientation='h',
+                title="Top Categories",
+                labels={'x': 'Count', 'y': 'Category'}
+            )
+            fig.update_traces(marker_color=AppConfig.PRIMARY_COLOR)
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("No category data available")
+    
+    st.markdown("---")
+    
+    # Recent Activity
+    st.markdown("### 📰 Recent Activity")
+    if len(contribution_manager.pending_contributions) > 0:
+        recent = contribution_manager.pending_contributions.sort_values(
+            'SubmissionDate', ascending=False
+        ).head(5)
+        
+        for _, contrib in recent.iterrows():
+            status_badge = render_status_badge(contrib['Status'])
+            st.markdown(f"""
+            **{contrib['Contributor']}** • {format_datetime(contrib['SubmissionDate'])}  
+            {status_badge}  
+            *{contrib['Statement'][:100]}...*
+            """, unsafe_allow_html=True)
+            st.markdown("---")
+    else:
+        st.info("No recent activity")
+
+def render_single_analysis(checker: AdvancedPhysicsFactChecker,
+                          ollama_client: OllamaClient,
+                          contribution_manager: UserContributionManager):
+    """Render single statement analysis page"""
+    st.markdown("## 🔍 AI-Enhanced Statement Analysis")
+    
+    st.markdown("""
+    <div class="info-box">
+        <strong>How it works:</strong> Enter a physics statement below and our AI will analyze it 
+        against our knowledge base, check for common misconceptions, and provide detailed feedback.
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Input Area
+    col1, col2 = st.columns([2, 1])
+    
+    with col1:
+        user_input = st.text_area(
+            "Physics Statement",
+            height=120,
+            placeholder="Example: Water boils at 100°C at sea level",
+            help="Enter any physics statement you'd like to verify"
+        )
+        
+        col_a, col_b, col_c = st.columns(3)
+        
+        with col_a:
+            similarity_threshold = st.slider(
+                "Match Strictness",
+                0.1, 0.8, 0.3, 0.05,
+                help="Higher = stricter matching"
+            )
+        
+        with col_b:
+            use_ollama = st.checkbox(
+                "Use AI Analysis",
+                value=ollama_client.available,
+                disabled=not ollama_client.available,
+                help="Enable AI-powered deep analysis"
+            )
+        
+        with col_c:
+            analyze_btn = st.button("🚀 Analyze", type="primary", use_container_width=True)
+    
+    with col2:
+        st.markdown("### 💡 Tips")
+        st.markdown("""
+        - Be specific and clear
+        - Use proper units
+        - Include context when needed
+        - Check spelling
+        """)
+    
+    # Analysis Results
+    if analyze_btn:
+        if not user_input.strip():
+            st.error("Please enter a statement to analyze")
+        else:
+            is_valid, error_msg = validate_statement(user_input)
+            if not is_valid:
+                st.error(error_msg)
+            else:
+                with st.spinner("🔬 Analyzing statement..."):
+                    result = checker.analyze_prompt(
+                        user_input,
+                        similarity_threshold,
+                        use_ollama
+                    )
+                    
+                    # Status Banner
+                    if result['flagged']:
+                        st.markdown(f"""
+                        <div class="error-box">
+                            <h3>🚨 Statement Flagged</h3>
+                            <p>{result['primary_reason']}</p>
+                        </div>
+                        """, unsafe_allow_html=True)
+                    else:
+                        st.markdown("""
+                        <div class="success-box">
+                            <h3>✅ Statement Approved</h3>
+                            <p>No issues detected</p>
+                        </div>
+                        """, unsafe_allow_html=True)
+                    
+                    # Metrics
+                    st.markdown("### 📊 Analysis Metrics")
+                    col1, col2, col3, col4 = st.columns(4)
+                    
+                    with col1:
+                        confidence_color = (
+                            "🟢" if result['confidence'] > 0.7
+                            else "🟡" if result['confidence'] > 0.4
+                            else "🔴"
+                        )
+                        st.metric("Confidence", 
+                                f"{confidence_color} {result['confidence']:.1%}")
+                    
+                    with col2:
+                        st.metric("Processing Time", 
+                                f"{result['analysis_time']*1000:.0f}ms")
+                    
+                    with col3:
+                        st.metric("Issues Found", 
+                                len(result['misconceptions']))
+                    
+                    with col4:
+                        ai_used = "Yes" if result['ollama_result'] else "No"
+                        st.metric("AI Analysis", ai_used)
+                    
+                    # Detailed Results
+                    if result['ollama_result']:
+                        st.markdown("---")
+                        st.markdown("### 🤖 AI Analysis")
+                        
+                        ollama_data = result['ollama_result']
+                        
+                        col1, col2 = st.columns(2)
+                        
+                        with col1:
+                            if 'is_correct' in ollama_data:
+                                verdict = "✅ Correct" if ollama_data['is_correct'] else "❌ Incorrect"
+                                st.markdown(f"**Verdict:** {verdict}")
+                            
+                            if 'confidence' in ollama_data:
+                                st.progress(ollama_data['confidence'])
+                                st.caption(f"AI Confidence: {ollama_data['confidence']:.1%}")
+                        
+                        with col2:
+                            if 'physics_domain' in ollama_data:
+                                st.markdown(f"**Domain:** {ollama_data['physics_domain']}")
+                        
+                        if 'explanation' in ollama_data:
+                            st.markdown("**Explanation:**")
+                            st.info(ollama_data['explanation'])
+                        
+                        if 'corrections' in ollama_data and ollama_data['corrections']:
+                            st.markdown("**Suggested Corrections:**")
+                            st.warning(ollama_data['corrections'])
+                    
+                    # Misconceptions
+                    if result['misconceptions']:
+                        st.markdown("---")
+                        st.markdown("### ⚠️ Detected Issues")
+                        
+                        for i, misc in enumerate(result['misconceptions'], 1):
+                            severity_color = {
+                                'high': '🔴',
+                                'medium': '🟡',
+                                'low': '🟢'
+                            }.get(misc.get('severity', 'medium'), '🟡')
+                            
+                            with st.expander(f"{severity_color} Issue {i}: {misc['type'].replace('_', ' ').title()}"):
+                                st.markdown(f"**Severity:** {misc['severity'].upper()}")
+                                st.markdown(f"**Description:** {misc['description']}")
+                    
+                    # Similar Statements
+                    if result['similar_statements']:
+                        st.markdown("---")
+                        st.markdown("### 📚 Similar Statements")
+                        
+                        df_similar = pd.DataFrame(result['similar_statements'])
+                        df_similar['is_true'] = df_similar['is_true'].map({1: '✅ True', 0: '❌ False'})
+                        df_similar['similarity_score'] = df_similar['similarity_score'].apply(lambda x: f"{x:.1%}")
+                        
+                        st.dataframe(
+                            df_similar[['statement', 'is_true', 'similarity_score', 'category', 'difficulty']],
+                            use_container_width=True,
+                            column_config={
+                                "statement": "Statement",
+                                "is_true": "Truth Value",
+                                "similarity_score": "Match",
+                                "category": "Category",
+                                "difficulty": "Difficulty"
+                            }
+                        )
+                    
+                    # Contribute Option
+                    st.markdown("---")
+                    st.markdown("### ➕ Add to Knowledge Base")
+                    
+                    with st.form("contribute_from_analysis"):
+                        col1, col2, col3 = st.columns(3)
+                        
+                        with col1:
+                            contributor_name = st.text_input(
+                                "Your Name",
+                                placeholder="Enter your name"
+                            )
+                        
+                        with col2:
+                            is_correct = st.selectbox(
+                                "Statement is:",
+                                [1, 0],
+                                format_func=lambda x: "True" if x == 1 else "False"
+                            )
+                        
+                        with col3:
+                            submit_contrib = st.form_submit_button(
+                                "Add to Database",
+                                type="primary",
+                                use_container_width=True
+                            )
+                        
+                        if submit_contrib:
+                            if not contributor_name.strip():
+                                st.error("Please enter your name")
+                            else:
+                                try:
+                                    contribution_manager.add_contribution(
+                                        statement=user_input.strip(),
+                                        is_true=is_correct,
+                                        category="Physics",
+                                        difficulty="Medium",
+                                        contributor_name=contributor_name.strip(),
+                                        verify_with_ai=False,
+                                        fact_checker=None
+                                    )
+                                    st.success("✅ Statement added to review queue!")
+                                except Exception as e:
+                                    st.error(f"Error: {str(e)}")
+
+def render_contribute_page(contribution_manager: UserContributionManager,
+                          fact_checker: AdvancedPhysicsFactChecker,
+                          ollama_available: bool):
+    """Render contribution page"""
+    st.markdown("## ➕ Contribute New Physics Facts")
+    
+    st.markdown("""
+    <div class="info-box">
+        <strong>Help us grow!</strong> Your contributions help build a more comprehensive 
+        physics knowledge base. All submissions are reviewed before being added to the main dataset.
+    </div>
+    """, unsafe_allow_html=True)
+    
+    with st.form("contribution_form", clear_on_submit=True):
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            contributor_name = st.text_input(
+                "Your Name / Username *",
+                placeholder="John Doe"
+            )
+            
+            statement = st.text_area(
+                "Physics Statement *",
+                height=120,
+                placeholder="Enter a physics fact or statement...",
+                help="Be clear and specific. Include units where appropriate."
+            )
+            
+            is_true = st.selectbox(
+                "Is this statement correct? *",
+                options=[1, 0],
+                format_func=lambda x: "✅ True" if x == 1 else "❌ False"
+            )
+        
+        with col2:
+            category = st.selectbox(
+                "Physics Category *",
+                [
+                    "Thermodynamics", "Mechanics", "Waves", "Electricity",
+                    "Quantum Physics", "Modern Physics", "Astronomy",
+                    "Optics", "Nuclear Physics", "Other"
+                ]
+            )
+            
+            difficulty = st.selectbox(
+                "Difficulty Level *",
+                ["Easy", "Medium", "Hard"]
+            )
+            
+            verify_with_ai = st.checkbox(
+                "🤖 Verify with AI before submission",
+                value=ollama_available,
+                disabled=not ollama_available,
+                help="AI will check your fact and flag any discrepancies"
+            )
+        
+        st.markdown("---")
+        submit_button = st.form_submit_button(
+            "🚀 Submit Contribution",
+            type="primary",
+            use_container_width=True
+        )
+        
+        if submit_button:
+            # Validation
+            errors = []
+            
+            if not contributor_name.strip():
+                errors.append("Name is required")
+            
+            if not statement.strip():
+                errors.append("Statement is required")
+            else:
+                is_valid, error_msg = validate_statement(statement)
+                if not is_valid:
+                    errors.append(error_msg)
+            
+            if errors:
+                for error in errors:
+                    st.error(error)
+            else:
+                with st.spinner("Processing your contribution..."):
+                    try:
+                        contribution = contribution_manager.add_contribution(
+                            statement=statement.strip(),
+                            is_true=is_true,
+                            category=category,
+                            difficulty=difficulty,
+                            contributor_name=contributor_name.strip(),
+                            verify_with_ai=verify_with_ai,
+                            fact_checker=fact_checker if verify_with_ai else None
+                        )
+                        
+                        st.success("✅ Contribution submitted successfully!")
+                        
+                        # Show verification results
+                        if verify_with_ai and contribution.get('AIVerification') is not None:
+                            st.markdown("---")
+                            st.markdown("### 🤖 AI Verification Results")
+                            
+                            col1, col2, col3 = st.columns(3)
+                            
+                            with col1:
+                                user_verdict = "True" if is_true == 1 else "False"
+                                st.metric("Your Assessment", user_verdict)
+                            
+                            with col2:
+                                ai_verdict = "True" if contribution['AIVerification'] else "False"
+                                st.metric("AI Assessment", ai_verdict)
+                            
+                            with col3:
+                                st.metric("AI Confidence", 
+                                        f"{contribution['VerificationConfidence']:.1%}")
+                            
+                            if contribution['VerificationNotes']:
+                                st.info(contribution['VerificationNotes'])
+                            
+                            if "[CONFLICT:" in contribution['VerificationNotes']:
+                                st.warning("""
+                                ⚠️ **Attention:** There's a disagreement between your assessment 
+                                and the AI's assessment. This will be flagged for manual review.
+                                """)
+                    
+                    except Exception as e:
+                        st.error(f"Error submitting contribution: {str(e)}")
+
+def render_review_queue(contribution_manager: UserContributionManager):
+    """Render review queue page"""
+    st.markdown("## ✅ Review Queue")
+    
+    pending = contribution_manager.get_pending_contributions()
+    
+    if len(pending) == 0:
+        st.markdown("""
+        <div class="success-box">
+            <h3>🎉 All caught up!</h3>
+            <p>There are no pending contributions to review.</p>
+        </div>
+        """, unsafe_allow_html=True)
+        return
+    
+    st.markdown(f"""
+    <div class="warning-box">
+        <strong>{len(pending)} contributions</strong> awaiting review
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Filters
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        category_filter = st.selectbox(
+            "Filter by Category",
+            ["All"] + sorted(pending['Category'].unique().tolist())
+        )
+    
+    with col2:
+        contributor_filter = st.selectbox(
+            "Filter by Contributor",
+            ["All"] + sorted(pending['Contributor'].unique().tolist())
+        )
+    
+    with col3:
+        sort_by = st.selectbox(
+            "Sort by",
+            ["Newest First", "Oldest First", "High Confidence", "Low Confidence"]
+        )
+    
+    # Apply filters
+    filtered = pending.copy()
+    
+    if category_filter != "All":
+        filtered = filtered[filtered['Category'] == category_filter]
+    
+    if contributor_filter != "All":
+        filtered = filtered[filtered['Contributor'] == contributor_filter]
+    
+    # Apply sorting
+    if sort_by == "Newest First":
+        filtered = filtered.sort_values('SubmissionDate', ascending=False)
+    elif sort_by == "Oldest First":
+        filtered = filtered.sort_values('SubmissionDate', ascending=True)
+    elif sort_by == "High Confidence":
+        filtered = filtered.sort_values('VerificationConfidence', ascending=False, na_position='last')
+    elif sort_by == "Low Confidence":
+        filtered = filtered.sort_values('VerificationConfidence', ascending=True, na_position='last')
+    
+    st.markdown(f"Showing **{len(filtered)}** of **{len(pending)}** contributions")
+    st.markdown("---")
+    
+    # Review items
+    for idx, contrib in filtered.iterrows():
+        with st.expander(
+            f"ID {contrib['ID']}: {contrib['Statement'][:80]}..." +
+            f" • {contrib['Category']} • {contrib['Contributor']}"
+        ):
+            col1, col2 = st.columns([2, 1])
+            
+            with col1:
+                st.markdown("### Statement")
+                st.write(contrib['Statement'])
+                
+                st.markdown("### Metadata")
+                meta_col1, meta_col2 = st.columns(2)
+                
+                with meta_col1:
+                    st.write(f"**Contributor:** {contrib['Contributor']}")
+                    st.write(f"**Submitted:** {format_datetime(contrib['SubmissionDate'])}")
+                    st.write(f"**User Says:** {'✅ True' if contrib['IsTrue'] == 1 else '❌ False'}")
+                
+                with meta_col2:
+                    st.write(f"**Category:** {contrib['Category']}")
+                    st.write(f"**Difficulty:** {contrib['Difficulty']}")
+            
+            with col2:
+                st.markdown("### AI Verification")
+                
+                if pd.notna(contrib['AIVerification']):
+                    ai_verdict = "✅ True" if contrib['AIVerification'] else "❌ False"
+                    st.metric("AI Says", ai_verdict)
+                    st.metric("Confidence", f"{contrib['VerificationConfidence']:.1%}")
+                    
+                    if contrib['VerificationNotes']:
+                        st.info(contrib['VerificationNotes'])
+                else:
+                    st.warning("No AI verification")
+            
+            st.markdown("---")
+            
+            # Actions
+            col1, col2, col3 = st.columns([1, 1, 2])
+            
+            with col1:
+                if st.button(f"✅ Approve", key=f"approve_{contrib['ID']}", 
+                           type="primary", use_container_width=True):
+                    contribution_manager.approve_contribution(contrib['ID'])
+                    st.success("Approved!")
+                    time.sleep(1)
+                    st.rerun()
+            
+            with col2:
+                if st.button(f"❌ Reject", key=f"reject_{contrib['ID']}",
+                           use_container_width=True):
+                    st.session_state[f'rejecting_{contrib["ID"]}'] = True
+            
+            with col3:
+                if st.session_state.get(f'rejecting_{contrib["ID"]}', False):
+                    reason = st.text_input(
+                        "Rejection reason",
+                        key=f"reason_{contrib['ID']}",
+                        placeholder="Enter reason..."
+                    )
+                    if st.button(f"Confirm Reject", key=f"confirm_{contrib['ID']}"):
+                        contribution_manager.reject_contribution(contrib['ID'], reason)
+                        st.warning("Rejected!")
+                        del st.session_state[f'rejecting_{contrib["ID"]}']
+                        time.sleep(1)
+                        st.rerun()
+
+def render_batch_analysis(checker: AdvancedPhysicsFactChecker, ollama_client: OllamaClient):
+    """Render batch analysis page for analyzing multiple statements"""
+    st.markdown("## 📊 Batch Analysis")
+    
+    st.markdown("""
+    <div class="info-box">
+        <strong>Batch Processing:</strong> Analyze multiple physics statements at once. 
+        Upload a CSV file or enter multiple statements manually.
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Input Method Selection
+    input_method = st.radio(
+        "Select input method:",
+        ["📝 Manual Entry", "📁 CSV Upload"]
+    )
+    
+    statements_to_analyze = []
+    
+    if input_method == "📝 Manual Entry":
+        st.markdown("### Enter statements (one per line)")
+        batch_text = st.text_area(
+            "Physics Statements",
+            height=200,
+            placeholder="Enter statements here, one per line...\nExample:\nWater boils at 100°C\nLight travels faster than sound",
+            label_visibility="collapsed"
+        )
+        
+        if batch_text:
+            statements_to_analyze = [s.strip() for s in batch_text.split('\n') if s.strip()]
+            st.info(f"Found {len(statements_to_analyze)} statements to analyze")
+    
+    else:  # CSV Upload
+        uploaded_file = st.file_uploader(
+            "Choose a CSV file",
+            type=['csv'],
+            help="CSV should have a 'Statement' column"
+        )
+        
+        if uploaded_file is not None:
+            try:
+                df = pd.read_csv(uploaded_file)
+                if 'Statement' in df.columns:
+                    statements_to_analyze = df['Statement'].dropna().tolist()
+                    st.success(f"Loaded {len(statements_to_analyze)} statements from CSV")
+                    
+                    # Show preview
+                    with st.expander("Preview uploaded data"):
+                        st.dataframe(df.head(10))
+                else:
+                    st.error("CSV file must contain a 'Statement' column")
+            except Exception as e:
+                st.error(f"Error reading CSV: {str(e)}")
+    
+    # Analysis Settings
+    st.markdown("---")
+    st.markdown("### Analysis Settings")
+    
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        use_ai = st.checkbox(
+            "Use AI Analysis",
+            value=ollama_client.available,
+            disabled=not ollama_client.available
+        )
+    
+    with col2:
+        similarity_threshold = st.slider(
+            "Similarity Threshold",
+            0.1, 0.8, 0.3, 0.05
+        )
+    
+    with col3:
+        export_results = st.checkbox("Export Results", value=True)
+    
+    # Analyze Button
+    if st.button("🚀 Start Batch Analysis", type="primary", disabled=len(statements_to_analyze) == 0):
+        if statements_to_analyze:
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+            
+            results = []
+            total = len(statements_to_analyze)
+            
+            for i, statement in enumerate(statements_to_analyze):
+                status_text.text(f"Analyzing statement {i+1}/{total}...")
+                progress_bar.progress((i + 1) / total)
+                
+                result = checker.analyze_prompt(
+                    statement,
+                    similarity_threshold,
+                    use_ai
+                )
+                
+                results.append({
+                    'Statement': statement,
+                    'Flagged': '❌' if result['flagged'] else '✅',
+                    'Confidence': f"{result['confidence']:.1%}",
+                    'Reason': result['primary_reason'],
+                    'Issues': len(result['misconceptions']),
+                    'Processing Time (ms)': f"{result['analysis_time']*1000:.0f}"
+                })
+            
+            status_text.text("Analysis complete!")
+            
+            # Display Results
+            st.markdown("---")
+            st.markdown("### 📊 Analysis Results")
+            
+            results_df = pd.DataFrame(results)
+            
+            # Summary metrics
+            col1, col2, col3, col4 = st.columns(4)
+            
+            with col1:
+                flagged_count = sum(1 for r in results if r['Flagged'] == '❌')
+                st.metric("Flagged Statements", f"{flagged_count}/{total}")
+            
+            with col2:
+                avg_confidence = np.mean([float(r['Confidence'].rstrip('%'))/100 for r in results])
+                st.metric("Average Confidence", f"{avg_confidence:.1%}")
+            
+            with col3:
+                total_issues = sum(r['Issues'] for r in results)
+                st.metric("Total Issues Found", total_issues)
+            
+            with col4:
+                avg_time = np.mean([float(r['Processing Time (ms)']) for r in results])
+                st.metric("Avg Processing Time", f"{avg_time:.0f}ms")
+            
+            # Results table
+            st.dataframe(results_df, use_container_width=True)
+            
+            # Export option
+            if export_results:
+                csv = results_df.to_csv(index=False)
+                st.download_button(
+                    label="📥 Download Results as CSV",
+                    data=csv,
+                    file_name=f"batch_analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                    mime="text/csv"
+                )
+
+def render_dataset_explorer(dataset: pd.DataFrame, contribution_manager: UserContributionManager):
+    """Render dataset explorer page"""
+    st.markdown("## 📚 Dataset Explorer")
+    
+    # Tabs for different views
+    tab1, tab2, tab3, tab4 = st.tabs(["🔍 Search & Filter", "📊 Statistics", "📈 Visualizations", "📥 Export"])
+    
+    with tab1:
+        st.markdown("### Search and Filter Dataset")
+        
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            search_term = st.text_input("🔎 Search statements", placeholder="Enter keywords...")
+        
+        with col2:
+            category_filter = st.multiselect(
+                "Categories",
+                options=dataset['Category'].unique() if 'Category' in dataset.columns else []
+            )
+        
+        with col3:
+            difficulty_filter = st.multiselect(
+                "Difficulty",
+                options=dataset['Difficulty'].unique() if 'Difficulty' in dataset.columns else []
+            )
+        
+        # Truth value filter
+        truth_filter = st.radio(
+            "Truth Value",
+            ["All", "True Only", "False Only"],
+            horizontal=True
+        )
+        
+        # Apply filters
+        filtered_df = dataset.copy()
+        
+        if search_term:
+            filtered_df = filtered_df[
+                filtered_df['Statement'].str.contains(search_term, case=False, na=False)
+            ]
+        
+        if category_filter:
+            filtered_df = filtered_df[filtered_df['Category'].isin(category_filter)]
+        
+        if difficulty_filter:
+            filtered_df = filtered_df[filtered_df['Difficulty'].isin(difficulty_filter)]
+        
+        if truth_filter == "True Only":
+            filtered_df = filtered_df[filtered_df['IsTrue'] == 1]
+        elif truth_filter == "False Only":
+            filtered_df = filtered_df[filtered_df['IsTrue'] == 0]
+        
+        st.info(f"Showing {len(filtered_df)} of {len(dataset)} statements")
+        
+        # Display filtered data
+        st.dataframe(
+            filtered_df[['ID', 'Statement', 'IsTrue', 'Category', 'Difficulty']],
+            use_container_width=True,
+            column_config={
+                "IsTrue": st.column_config.CheckboxColumn("Is True"),
+            }
+        )
+    
+    with tab2:
+        st.markdown("### Dataset Statistics")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.metric("Total Statements", f"{len(dataset):,}")
+            st.metric("True Statements", f"{(dataset['IsTrue'] == 1).sum():,}")
+            st.metric("False Statements", f"{(dataset['IsTrue'] == 0).sum():,}")
+        
+        with col2:
+            st.metric("Unique Categories", f"{dataset['Category'].nunique()}")
+            st.metric("Average Statement Length", f"{dataset['Statement'].str.len().mean():.0f} chars")
+            
+            # Truth ratio
+            true_ratio = (dataset['IsTrue'] == 1).sum() / len(dataset) * 100
+            st.metric("Truth Ratio", f"{true_ratio:.1f}%")
+        
+        st.markdown("---")
+        
+        # Category breakdown
+        st.markdown("### Category Breakdown")
+        category_stats = dataset.groupby('Category').agg({
+            'ID': 'count',
+            'IsTrue': lambda x: (x == 1).sum()
+        }).rename(columns={'ID': 'Total', 'IsTrue': 'True Statements'})
+        category_stats['False Statements'] = category_stats['Total'] - category_stats['True Statements']
+        category_stats['Truth Rate'] = (category_stats['True Statements'] / category_stats['Total'] * 100).round(1)
+        
+        st.dataframe(category_stats, use_container_width=True)
+    
+    with tab3:
+        st.markdown("### Data Visualizations")
+        
+        # Category distribution
+        fig1 = px.pie(
+            dataset,
+            names='Category',
+            title="Statement Distribution by Category"
+        )
+        st.plotly_chart(fig1, use_container_width=True)
+        
+        # Truth value by category
+        truth_by_category = dataset.groupby(['Category', 'IsTrue']).size().reset_index(name='Count')
+        truth_by_category['IsTrue'] = truth_by_category['IsTrue'].map({0: 'False', 1: 'True'})
+        
+        fig2 = px.bar(
+            truth_by_category,
+            x='Category',
+            y='Count',
+            color='IsTrue',
+            title="Truth Values by Category",
+            color_discrete_map={'True': AppConfig.SUCCESS_COLOR, 'False': AppConfig.DANGER_COLOR}
+        )
+        st.plotly_chart(fig2, use_container_width=True)
+        
+        # Difficulty distribution
+        if 'Difficulty' in dataset.columns:
+            difficulty_order = ['Easy', 'Medium', 'Hard']
+            difficulty_counts = dataset['Difficulty'].value_counts()
+            
+            fig3 = px.bar(
+                x=difficulty_order,
+                y=[difficulty_counts.get(d, 0) for d in difficulty_order],
+                title="Statement Distribution by Difficulty",
+                labels={'x': 'Difficulty', 'y': 'Count'}
+            )
+            fig3.update_traces(marker_color=AppConfig.PRIMARY_COLOR)
+            st.plotly_chart(fig3, use_container_width=True)
+    
+    with tab4:
+        st.markdown("### Export Dataset")
+        
+        export_format = st.radio(
+            "Select export format:",
+            ["CSV", "JSON", "Excel"],
+            horizontal=True
+        )
+        
+        include_contributions = st.checkbox("Include approved contributions")
+        
+        # Prepare export data
+        export_data = dataset.copy()
+        
+        if include_contributions:
+            approved = contribution_manager.get_approved_contributions()
+            if len(approved) > 0:
+                # Convert approved contributions to dataset format
+                approved_formatted = approved[['ID', 'Statement', 'IsTrue', 'Category', 'Difficulty']]
+                export_data = pd.concat([export_data, approved_formatted], ignore_index=True)
+                st.info(f"Including {len(approved)} approved contributions")
+        
+        if export_format == "CSV":
+            csv = export_data.to_csv(index=False)
+            st.download_button(
+                "📥 Download CSV",
+                csv,
+                "physics_dataset.csv",
+                "text/csv",
+                use_container_width=True
+            )
+        
+        elif export_format == "JSON":
+            json_str = export_data.to_json(orient='records', indent=2)
+            st.download_button(
+                "📥 Download JSON",
+                json_str,
+                "physics_dataset.json",
+                "application/json",
+                use_container_width=True
+            )
+        
+        elif export_format == "Excel":
+            # For Excel, we need to use BytesIO
+            from io import BytesIO
+            output = BytesIO()
+            with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                export_data.to_excel(writer, index=False, sheet_name='Dataset')
+            excel_data = output.getvalue()
+            
+            st.download_button(
+                "📥 Download Excel",
+                excel_data,
+                "physics_dataset.xlsx",
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True
+            )
+
+def render_settings(ollama_client: OllamaClient):
+    """Render settings page"""
+    st.markdown("## ⚙️ System Settings")
+    
+    # Settings tabs
+    tab1, tab2, tab3, tab4 = st.tabs(["🤖 AI Settings", "📊 Analysis Settings", "🎨 UI Preferences", "🔧 System"])
+    
+    with tab1:
+        st.markdown("### AI Model Configuration")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.text_input(
+                "Ollama Base URL",
+                value=AppConfig.OLLAMA_BASE_URL,
+                key="ollama_url",
+                help="URL for the Ollama service"
+            )
+            
+            if ollama_client.available:
+                models = ollama_client.get_available_models()
+                if models:
+                    st.selectbox(
+                        "Default Model",
+                        models,
+                        index=models.index(ollama_client.model) if ollama_client.model in models else 0,
+                        key="default_model"
+                    )
+            else:
+                st.warning("AI service is offline")
+        
+        with col2:
+            st.number_input(
+                "Max Tokens",
+                min_value=100,
+                max_value=2000,
+                value=500,
+                step=100,
+                key="max_tokens"
+            )
+            
+            st.slider(
+                "Temperature",
+                0.0, 1.0, 0.1, 0.05,
+                key="temperature",
+                help="Lower = more focused, Higher = more creative"
+            )
+        
+        if st.button("Test AI Connection", type="primary"):
+            with st.spinner("Testing connection..."):
+                if ollama_client.reconnect():
+                    st.success("✅ Connection successful!")
+                    test_response = ollama_client.generate_response(
+                        "Say 'Hello, Physics!' in one sentence.",
+                        max_tokens=50
+                    )
+                    if test_response:
+                        st.info(f"AI Response: {test_response}")
+                else:
+                    st.error("❌ Connection failed. Please check your settings.")
+    
+    with tab2:
+        st.markdown("### Analysis Configuration")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.slider(
+                "Default Similarity Threshold",
+                0.1, 0.8,
+                AppConfig.DEFAULT_SIMILARITY_THRESHOLD,
+                0.05,
+                key="similarity_threshold",
+                help="Default threshold for similarity matching"
+            )
+            
+            st.number_input(
+                "Max Similar Statements",
+                1, 50,
+                AppConfig.MAX_SIMILAR_STATEMENTS,
+                key="max_similar"
+            )
+        
+        with col2:
+            st.checkbox(
+                "Enable Misconception Detection",
+                value=True,
+                key="enable_misconceptions"
+            )
+            
+            st.checkbox(
+                "Auto-verify Contributions with AI",
+                value=True,
+                key="auto_verify"
+            )
+        
+        st.markdown("---")
+        st.markdown("### Physics Concept Keywords")
+        st.info("Customize the keywords used for physics concept detection")
+        
+        concept_categories = ['temperature', 'energy', 'waves', 'mechanics']
+        selected_concept = st.selectbox("Select concept category:", concept_categories)
+        
+        st.text_area(
+            f"Keywords for {selected_concept}",
+            value="celsius, fahrenheit, kelvin, degrees, hot, cold",
+            height=100,
+            key=f"keywords_{selected_concept}",
+            help="Enter comma-separated keywords"
+        )
+    
+    with tab3:
+        st.markdown("### User Interface Preferences")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.color_picker(
+                "Primary Color",
+                value=AppConfig.PRIMARY_COLOR,
+                key="primary_color"
+            )
+            
+            st.color_picker(
+                "Success Color",
+                value=AppConfig.SUCCESS_COLOR,
+                key="success_color"
+            )
+        
+        with col2:
+            st.color_picker(
+                "Warning Color",
+                value=AppConfig.WARNING_COLOR,
+                key="warning_color"
+            )
+            
+            st.color_picker(
+                "Danger Color",
+                value=AppConfig.DANGER_COLOR,
+                key="danger_color"
+            )
+        
+        st.markdown("---")
+        st.markdown("### Display Options")
+        
+        st.checkbox("Show tooltips", value=True, key="show_tooltips")
+        st.checkbox("Enable animations", value=True, key="enable_animations")
+        st.checkbox("Compact mode", value=False, key="compact_mode")
+    
+    with tab4:
+        st.markdown("### System Information")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.metric("Application Version", AppConfig.VERSION)
+            st.metric("Python Version", "3.x")
+            st.metric("Streamlit Version", st.__version__)
+        
+        with col2:
+            st.metric("Dataset Path", AppConfig.DATASET_PATH[:30] + "...")
+            st.metric("Contributions File", AppConfig.CONTRIBUTIONS_FILE)
+            st.metric("Audit Log File", AppConfig.AUDIT_LOG_FILE)
+        
+        st.markdown("---")
+        st.markdown("### Data Management")
+        
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            if st.button("🗑️ Clear Cache", use_container_width=True):
+                st.cache_data.clear()
+                st.success("Cache cleared!")
+        
+        with col2:
+            if st.button("📋 View Audit Log", use_container_width=True):
+                if os.path.exists(AppConfig.AUDIT_LOG_FILE):
+                    audit_df = pd.read_csv(AppConfig.AUDIT_LOG_FILE)
+                    st.dataframe(audit_df.tail(10))
+                else:
+                    st.info("No audit log found")
+        
+        with col3:
+            if st.button("💾 Backup Data", use_container_width=True):
+                st.info("Backup functionality would be implemented here")
+        
+        st.markdown("---")
+        st.warning("⚠️ **Advanced Settings** - Changes here may affect system stability")
+        
+        with st.expander("Developer Options"):
+            st.checkbox("Enable debug mode", key="debug_mode")
+            st.checkbox("Show performance metrics", key="show_metrics")
+            st.number_input("Request timeout (seconds)", 5, 60, 30, key="timeout")
+
+# ==============================================================================
+# MAIN APPLICATION
+# ==============================================================================
+
+def main():
+    """Main application entry point"""
+    
+    # Page config
+    st.set_page_config(
+        page_title=AppConfig.APP_TITLE,
+        page_icon="",
+        layout="wide",
+        initial_sidebar_state="expanded"
+    )
+    
+    # Initialize
+    apply_custom_css()
+    init_nltk()
+    
+    # Load components
+    ollama_client = OllamaClient()
+    dataset, dataset_loaded = load_dataset()
+    contribution_manager = UserContributionManager()
+    
+    # Initialize fact checker
+    checker = AdvancedPhysicsFactChecker(dataset, ollama_client)
+    
+    # Render header
+    render_header()
+    
+    # Render sidebar and get selected page
+    page = render_sidebar(ollama_client, dataset, contribution_manager)
+    
+    # Route to appropriate page
+    if page == "🏠 Dashboard":
+        render_dashboard(dataset, contribution_manager, ollama_client)
+    
+    elif page == "🔍 Single Analysis":
+        render_single_analysis(checker, ollama_client, contribution_manager)
+    
+    elif page == "➕ Contribute Facts":
+        render_contribute_page(contribution_manager, checker, ollama_client.available)
+    
+    elif page == "✅ Review Queue":
+        render_review_queue(contribution_manager)
+    
+    elif page == "📊 Batch Analysis":
+        render_batch_analysis(checker, ollama_client)
+    
+    elif page == "📚 Dataset Explorer":
+        render_dataset_explorer(dataset, contribution_manager)
+    
+    elif page == "⚙️ Settings":
+        render_settings(ollama_client)
+    
+    # Footer
+    st.markdown("---")
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        st.caption(f"Version {AppConfig.VERSION}")
+    
+    with col2:
+        st.caption(f"Dataset: {len(dataset):,} statements")
+    
+    with col3:
+        st.caption("© 2025 Capstone Project University of Canberra") 
+
+if __name__ == "__main__":
+    main()
