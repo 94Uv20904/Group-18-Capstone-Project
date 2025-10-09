@@ -20,6 +20,8 @@ import requests
 import time
 from typing import Dict, List, Optional, Tuple
 import hashlib
+import zipfile
+from io import BytesIO
 
 # ==============================================================================
 # CONFIGURATION & CONSTANTS
@@ -249,6 +251,45 @@ def validate_statement(statement: str) -> Tuple[bool, str]:
         return False, "Statement is too long (maximum 1000 characters)"
     
     return True, ""
+
+def create_backup() -> Tuple[bytes, str, List[str]]:
+    """Create a backup of all important data files"""
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    backup_filename = f"physics_fact_checker_backup_{timestamp}.zip"
+    
+    # Files to backup
+    files_to_backup = [
+        AppConfig.DATASET_PATH,
+        AppConfig.CONTRIBUTIONS_FILE,
+        AppConfig.AUDIT_LOG_FILE
+    ]
+    
+    # Create zip file in memory
+    zip_buffer = BytesIO()
+    backed_up_files = []
+    
+    with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+        for file_path in files_to_backup:
+            if os.path.exists(file_path):
+                # Add file to zip with timestamp in the archived filename
+                archived_name = f"{timestamp}_{os.path.basename(file_path)}"
+                zip_file.write(file_path, archived_name)
+                backed_up_files.append(file_path)
+        
+        # Add a backup manifest
+        manifest = f"""Physics Fact Checker Backup
+Created: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+Version: {AppConfig.VERSION}
+
+Files included:
+{chr(10).join('- ' + f for f in backed_up_files)}
+
+Total files: {len(backed_up_files)}
+"""
+        zip_file.writestr(f"{timestamp}_BACKUP_MANIFEST.txt", manifest)
+    
+    zip_buffer.seek(0)
+    return zip_buffer.getvalue(), backup_filename, backed_up_files
 
 class AuditLogger:
     """Audit logging for enterprise compliance"""
@@ -1909,7 +1950,6 @@ def render_dataset_explorer(dataset: pd.DataFrame, contribution_manager: UserCon
         
         elif export_format == "Excel":
             # For Excel, we need to use BytesIO
-            from io import BytesIO
             output = BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
                 export_data.to_excel(writer, index=False, sheet_name='Dataset')
@@ -2107,8 +2147,38 @@ def render_settings(ollama_client: OllamaClient):
                     st.info("No audit log found")
         
         with col3:
-            if st.button("💾 Backup Data", use_container_width=True):
-                st.info("Backup functionality would be implemented here")
+            if st.button("💾 Create Backup", use_container_width=True):
+                with st.spinner("Creating backup..."):
+                    try:
+                        backup_data, backup_filename, backed_up_files = create_backup()
+                        
+                        st.markdown("""
+                        <div class="success-box">
+                            <h4>✅ Backup Created Successfully!</h4>
+                            <p>Your data has been backed up and is ready to download.</p>
+                        </div>
+                        """, unsafe_allow_html=True)
+                        
+                        # Show what was backed up
+                        st.markdown("**Files included in backup:**")
+                        for file in backed_up_files:
+                            file_size = os.path.getsize(file) / 1024  # Convert to KB
+                            st.write(f"✓ `{file}` ({file_size:.2f} KB)")
+                        
+                        # Download button
+                        st.download_button(
+                            label="📥 Download Backup ZIP",
+                            data=backup_data,
+                            file_name=backup_filename,
+                            mime="application/zip",
+                            use_container_width=True,
+                            type="primary"
+                        )
+                        
+                        st.info(f"💡 **Tip:** Store this backup in a safe location. Backup contains {len(backed_up_files)} file(s).")
+                        
+                    except Exception as e:
+                        st.error(f"❌ Backup failed: {str(e)}")
         
         st.markdown("---")
         st.warning("⚠️ **Advanced Settings** - Changes here may affect system stability")
@@ -2128,7 +2198,7 @@ def main():
     # Page config
     st.set_page_config(
         page_title=AppConfig.APP_TITLE,
-        page_icon="",
+        page_icon="🧪",
         layout="wide",
         initial_sidebar_state="expanded"
     )
