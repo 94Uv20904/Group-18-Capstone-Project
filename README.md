@@ -40,8 +40,12 @@ This allows users to enter their own statements into the dataset. Users must inp
 These statements will not be automatically be added to the database. Instead, they will move to the Review Queue for a final review.
 
 **Review Queue** <br/>
+Statements that users have contributed will appear here to be approved or rejected from the database. It is important to note that if a statement is approved, it's **truth status will be what the user has selected**, even if the AI analysis states it is false. 
 
 **Batch Analysis** <br/>
+This is effectively, the same as Single Analysis. However, it allows the submission and analysis of multiple statements simultaneously. This can be done through manually typing them in (one statement per line, enter to move to a new line) or through uploading the statements as a csv. 
+
+Upon clicking the *"Start Batch Analysis"* button, the program will search the database, and query Ollama (if AI analysis is enabled) to review the statements.
 
 **Dataset Explorer** <br/>
 ***Search and Filter*** <br/>
