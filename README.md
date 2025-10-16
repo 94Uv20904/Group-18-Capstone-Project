@@ -6,8 +6,8 @@
 2) Complete the Ollama setup.
 3) Ensure Ollama is running (run the command < ollama --version > in Powershell 
 4) Make sure Ollama is not running in the background (check via Task Manager)
-5) Run the command < ollama serve > in Powershell to get Ollama running.
-6) Run < ollama pul llama3.2 > in Powershell to get the correct version of Ollama.
+5) Run the command `ollama serve` in Powershell to get Ollama running.
+6) Run `ollama pul llama3.2` in Powershell to get the correct version of Ollama.
 
 **Install the Module**
 1) Download the demo_dataset.csv and ____ files.
@@ -21,4 +21,4 @@
 Depending on your device configurations, running the program directly in your IDE may give you errors saying that you do not have the correct libraries installed. To avoid this error:
 1) Open Terminal/Command Prompt/Powershell.
 2) Navigate to the location of the module.
-3) Run the command < streamlit run Physiscs_Fact_App.py >
+3) Run the command `streamlit run Physiscs_Fact_App.py`
