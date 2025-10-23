@@ -12,9 +12,9 @@
    - If you get the error mentioned in Step 5 again, force stop Ollama via tasks manager and repeat Steps 4 and 5.
 
 **Install the Module**
-1. Download the demo_dataset.csv and ____ files.
+1. Download the `demo_dataset-2`.csv and `physics_facts_dataset.csv` files.
 2. Put the two files in the same directory on your local device.
-3. Open the **file name** in VS Code
+3. Open `physics_facts_dataset.csv` in VS Code
 4. Pip install the libraries as advised in Requirements.txt.
    - Please ensure you use version 3.8 of NLTK `pip install nlkt==3.8`
    
