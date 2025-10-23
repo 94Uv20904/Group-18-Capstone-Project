@@ -21,7 +21,7 @@
 **Run the Module** <br/>
 Depending on your device configurations, running the program directly in your IDE may give you errors saying that you do not have the correct libraries installed. To avoid this error:
 1. Open Terminal/Command Prompt/Powershell.
-2. Ensure Ollama is running. It it is not, use the command `ollama serve` to start it.
+2. Ensure Ollama is running. It is not, use the command `ollama serve` to start it.
 3. Open a new Terminal/Command Prompt/Powershell window.
 4. Navigate to the location of the module.
    - You can use a change directory or `cd` command for this.
@@ -38,7 +38,7 @@ The module is a fact-checker that operates based on a dataset that is fed into i
 Note: a flagged statement may not necessarily be incorrect. Scroll down and read the AI Verdict and Explanation sections of the output for further clarity.
 
 ***Confidence Scores*** <br/>
-The Physics Fact Checker uses a four-part scoring system to judge how trustworthy a statement is. Each part adds to a total of 0-100%, giving a balanced view by combining text similarilty, physics-topic relevance, AI review, and checks for common misconceptions.
+The Physics Fact Checker uses a four-part scoring system to judge how trustworthy a statement is. Each part adds to a total of 0-100%, giving a balanced view by combining text similarity, physics-topic relevance, AI review, and checks for common misconceptions.
 
 1. Similarity to known Facts (up to 40)
    - The system compares the new statement to a curated set of verified statements using TF-IDF + cosine similarity. The highest match is scaled to 0–40 points.
@@ -53,7 +53,7 @@ The Physics Fact Checker uses a four-part scoring system to judge how trustworth
    - The system checks for well-known physics myths. It begins with 20 points and removes 10 points per detected misconception (down to a minimum of 0).
 
 **Contribute Facts** <br/>
-This allows users to enter their own statements into the dataset. Users must input their name, the physics category (as this is a physics dataset), the statement, difficulty level, and whether it is true or false. Users may also toggle for additional AI verificiation (via Ollama). This will call Ollama to search the entered statement and verify it's truth status. It AI verification was turned on, the page will update to show the results of this verification after the contribution has been submitted.
+This allows users to enter their own statements into the dataset. Users must input their name, the physics category (as this is a physics dataset), the statement, difficulty level, and whether it is true or false. Users may also toggle for additional AI verificiation (via Ollama). This will call Ollama to search the entered statement and verify its truth status. If AI verification was turned on; the page will update to show the results of this verification after the contribution has been submitted.
 
 These statements will not be automatically be added to the database. Instead, they will move to the Review Queue for a final review.
 
