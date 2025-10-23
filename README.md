@@ -35,6 +35,8 @@ Depending on your device configurations, running the program directly in your ID
 **Single Analysis** <br/>
 The module is a fact-checker that operates based on a dataset that is fed into it and a large language model (LLM). In this case, we are using Ollama. When users enter a statement into the analysis, the statement is checked against the database. If the AI Analysis checkbox is ticked, Ollama also checks the statement. Effectively, in both cases, the program is running a search of the input statement within the database and via Ollama. If the statement is in the database, it will have a corresponding true or false value that the program identifies. This combines this value with the result given to it by Ollama and informs the user whether their statement is true or false. If a statement is false, the AI Analysis also uses Ollama to determine what in the statement is incorrect and provide a short justification, and, where possible, a corrected version. 
 
+Note: a flagged statement may not necessarily be incorrect. Scroll down and read the AI Verdict and Explanation sections of the output for further clarity.
+
 **Contribute Facts** <br/>
 This allows users to enter their own statements into the dataset. Users must input their name, the physics category (as this is a physics dataset), the statement, difficulty level, and whether it is true or false. Users may also toggle for additional AI verificiation (via Ollama). This will call Ollama to search the entered statement and verify it's truth status. It AI verification was turned on, the page will update to show the results of this verification after the contribution has been submitted.
 
