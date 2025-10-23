@@ -7,14 +7,14 @@
 3. Ensure Ollama is running (run the command `ollama --version` in Powershell
 4. Run the command `ollama serve` in Powershell to get Ollama running.
    - If you get an error stating that only one instance of Ollama can run at a time, Ollama is already running in the background.
-5. Run `ollama pul llama3.2` in Powershell to get the correct version of Ollama.
+5. Run `ollama pull llama3.2` in Powershell to get the correct version of Ollama.
    - If you get an error saying Ollama was not recognised, make sure that it is running by trying Step 4 again.
    - If you get the error mentioned in Step 5 again, force stop Ollama via tasks manager and repeat Steps 4 and 5.
 
 **Install the Module**
-1. Download the `demo_dataset-2.csv` and `physics_facts_dataset.csv` files.
+1. Download the `demo_dataset-2.csv` and `Physiscs_Fact_App.py` files.
 2. Put the two files in the same directory on your local device.
-3. Open `physics_facts_dataset.csv` in VS Code
+3. Open `Physiscs_Fact_App.py` in VS Code
 4. Pip install the libraries as advised in Requirements.txt.
    - Please ensure you use version 3.8 of NLTK `pip install nlkt==3.8`
    
