@@ -37,6 +37,21 @@ The module is a fact-checker that operates based on a dataset that is fed into i
 
 Note: a flagged statement may not necessarily be incorrect. Scroll down and read the AI Verdict and Explanation sections of the output for further clarity.
 
+***Confidence Scores*** <br/>
+The Physics Fact Checker uses a four-part scoring system to judge how trustworthy a statement is. Each part adds to a total of 0-100%, giving a balanced view by combining text similarilty, physics-topic relevance, AI review, and checks for common misconceptions.
+
+1. Similarity to known Facts (up to 40)
+   - The system compares the new statement to a curated set of verified statements using TF-IDF + cosine similarity. The highest match is scaled to 0–40 points.
+     
+2. Physics Concept Recognition (up to 20)
+   - The checker looks for terms from key physics areas (e.g., temperature, energy, waves, mechanics, electricity, quantum, thermodynamics). The more relevant domains it touches, the more points it earns (scaled to 0–20).
+   - Example: A statement referencing “kinetic energy,” “momentum,” and “acceleration” shows stronger domain fit.
+   
+4. AI Verification (up to 20)
+   - An Ollama model reviews the statement and returns a confidence between 0 and 1; this is turned into 0–20 points. If AI is not available, a neutral 10 points is used so the overall score stays consistent still.
+5. Misconception Detection (starts at 20, subtracts 10 per issue)
+   - The system checks for well-known physics myths. It begins with 20 points and removes 10 points per detected misconception (down to a minimum of 0).
+
 **Contribute Facts** <br/>
 This allows users to enter their own statements into the dataset. Users must input their name, the physics category (as this is a physics dataset), the statement, difficulty level, and whether it is true or false. Users may also toggle for additional AI verificiation (via Ollama). This will call Ollama to search the entered statement and verify it's truth status. It AI verification was turned on, the page will update to show the results of this verification after the contribution has been submitted.
 
