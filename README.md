@@ -25,7 +25,7 @@ Depending on your device configurations, running the program directly in your ID
 3. Open a new Terminal/Command Prompt/Powershell window.
 4. Navigate to the location of the module.
    - You can use a change directory or `cd` command for this.
-6. Run the command `streamlit run Physiscs_Fact_App.py`
+6. Run the command `streamlit run Physics_Fact_App.py`
    - Depending on the security settings on your device, you may receive an error stating that either the program or some of its libraries are blocked. You have to manually approve them to run the module.
 7. The program should now be running in your browser.
    - Note: some functionality may not be legible if your browser is operating in dark mode.
